@@ -56,8 +56,8 @@ ECHO    ─────→  GPIO 18
 ```
 LED RGB          ESP32
 ────────────────────
-Rojo    ─────  GPIO 23
-Verde  ─────  GPIO 22
+Rojo    ─────────→  GPIO 23
+Verde   ─────────→  GPIO 22
 Ánodo   ─────────→  3V3
 Cátodo  ─────────→  GND
 ```
