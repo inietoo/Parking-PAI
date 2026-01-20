@@ -33,7 +33,6 @@ Este módulo implementa un semáforo inteligente que detecta si una plaza de par
 | ESP32 DevKit V1 | 1 | Microcontrolador principal |
 | Sensor Ultrasónico HC-SR04 | 1 | Rango: 2cm - 400cm |
 | LED RGB (Ánodo Común) | 1 | Cátodo: 3V3, Ánodo: GND |
-| Resistencias 220Ω | 2 | Protección para LED (rojo, verde) |
 | Cables Dupont | ~8 | Conexiones generales |
 | Protoboard | 1 | Montaje de circuito |
 
@@ -57,8 +56,8 @@ ECHO    ─────→  GPIO 18
 ```
 LED RGB          ESP32
 ────────────────────
-Rojo    ─[220Ω]─→  GPIO 23
-Verde   ─[220Ω]─→  GPIO 22
+Rojo    ─────  GPIO 23
+Verde  ─────  GPIO 22
 Ánodo   ─────────→  3V3
 Cátodo  ─────────→  GND
 ```
@@ -275,7 +274,6 @@ mode COM3:115200
 ### LED RGB Ánodo Común
 - **Voltaje directo**: 2V (rojo), 2.2V (verde)
 - **Corriente máxima**: 20 mA por color
-- **Resistencia recomendada**: 220Ω
 - **Luminosidad**: 1000-2000 mcd
 
 ---
