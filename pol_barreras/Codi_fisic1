@@ -1,22 +1,14 @@
-// ===== SERVO SIN LIBRERÍAS - ESP32 CON PWM NATIVO =====
+// ===== PUERTA AUTOMÀTICA ESP32 - SENSE LLIBRERIES =====
+// Pins originals mantinguts: Servo(18), LEDs(26,25), Sensor(5,4)
+
 const int SERVO_PIN = 18;
-const int PWM_CHANNEL = 0;      // Canal LEDC (0-15)
-const int PWM_FREQUENCY = 50;   // 50 Hz para servo estándar
-const int PWM_RESOLUTION = 16;  // 16-bit resolución
-
-// Mapeo: 20ms ciclo total (50Hz)
-// 1ms pulse = 0°  → 3277 ticks
-// 1.5ms pulse = 90° → 4915 ticks
-// 2ms pulse = 180° → 6553 ticks
-
-const int SERVO_MIN = 3277;
-const int SERVO_MAX = 6553;
-
-// LEDs y Sensor
-const int GREEN = 26;
-const int RED = 25;
+const int LED_VERD = 26;
+const int LED_ROIG = 25;
 const int TRIG_PIN = 5;
 const int ECHO_PIN = 4;
+
+// Variables globals
+long distancia = 0;
 
 long mesurarDistancia() {
   digitalWrite(TRIG_PIN, LOW);
@@ -24,55 +16,64 @@ long mesurarDistancia() {
   digitalWrite(TRIG_PIN, HIGH);
   delayMicroseconds(10);
   digitalWrite(TRIG_PIN, LOW);
-
+  
   long duracio = pulseIn(ECHO_PIN, HIGH, 30000);
   if (duracio == 0) return 999;
   return duracio * 0.034 / 2;
 }
 
-// Mover servo a ángulo específico (0-180°)
-void servoWrite(int angle) {
-  int pwmValue = map(angle, 0, 180, SERVO_MIN, SERVO_MAX);
-  ledcWrite(PWM_CHANNEL, pwmValue);
+// Control servo amb pulsos manuals (sense ledc)
+void mouServo(int angle) {
+  int ampladaPulso = map(angle, 0, 180, 1000, 2000);
+  
+  // 10 cicles complets (200ms)
+  for(int i = 0; i < 10; i++) {
+    digitalWrite(SERVO_PIN, HIGH);
+    delayMicroseconds(ampladaPulso);
+    digitalWrite(SERVO_PIN, LOW);
+    delayMicroseconds(20000 - ampladaPulso);
+  }
 }
 
 void setup() {
-  // Configurar PWM del ESP32
-  ledcSetup(PWM_CHANNEL, PWM_FREQUENCY, PWM_RESOLUTION);
-  ledcAttachPin(SERVO_PIN, PWM_CHANNEL);
-
-  // LEDs
-  pinMode(GREEN, OUTPUT);
-  pinMode(RED, OUTPUT);
+  Serial.begin(115200);
+  Serial.println("🚪 Puerta automatica iniciada");
   
-  // Sensor ultrasónico
+  // Configurar pins
+  pinMode(SERVO_PIN, OUTPUT);
+  pinMode(LED_VERD, OUTPUT);
+  pinMode(LED_ROIG, OUTPUT);
   pinMode(TRIG_PIN, OUTPUT);
   pinMode(ECHO_PIN, INPUT);
-
-  // Estado inicial
-  servoWrite(5);
-  digitalWrite(RED, HIGH);
-  digitalWrite(GREEN, LOW);
-
-  Serial.begin(115200);
+  
+  // Estat inicial: porta tancada, llum vermella
+  mouServo(5);
+  digitalWrite(LED_ROIG, HIGH);
+  digitalWrite(LED_VERD, LOW);
+  
+  delay(1000);
 }
 
 void loop() {
-  long d = mesurarDistancia();
-  Serial.println(d);
-
-  // Puerta cerrada por defecto
-  servoWrite(5);
-  digitalWrite(RED, HIGH);
-  digitalWrite(GREEN, LOW);
-
-  // Si objeto a menos de 10cm: abrir puerta
-  if (d <= 10) {
-    digitalWrite(RED, LOW);
-    digitalWrite(GREEN, HIGH);
-    servoWrite(90);
-    delay(2000);
+  distancia = mesurarDistancia();
+  Serial.print("Distancia: ");
+  Serial.print(distancia);
+  Serial.println(" cm");
+  
+  // Porta tancada per defecte
+  mouServo(5);
+  digitalWrite(LED_ROIG, HIGH);
+  digitalWrite(LED_VERD, LOW);
+  
+  // Objeto detectat < 10cm -> obrir porta
+  if (distancia <= 10 && distancia > 0) {
+    Serial.println("🔓 Obrint porta...");
+    digitalWrite(LED_ROIG, LOW);
+    digitalWrite(LED_VERD, HIGH);
+    mouServo(90);
+    delay(3000);  // Manté 3 segons
+    Serial.println("🔒 Tancant porta...");
   }
-
-  delay(100);
+  
+  delay(200);
 }
