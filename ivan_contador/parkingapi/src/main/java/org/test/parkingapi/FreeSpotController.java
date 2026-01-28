@@ -1,5 +1,6 @@
 package org.test.parkingapi;
 
+import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -9,6 +10,7 @@ import java.util.List;
 
 //anotacion para indicar que este codigo devuelve HTTP
 @RestController
+@CrossOrigin(origins = "*")
 public class FreeSpotController {
     //GetMapping esta indicando que cuando llegue una peticion Get en la ruta /hello devolvera el mensaje de debajo
     @GetMapping("/freespot")
@@ -80,3 +82,4 @@ public class FreeSpotController {
         return counterZoneC;
     }
 }
+
