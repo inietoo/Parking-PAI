@@ -1,85 +1,96 @@
 package org.test.parkingapi;
 
-import org.springframework.web.bind.annotation.CrossOrigin;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
-
+import org.springframework.web.bind.annotation.*;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
-//anotacion para indicar que este codigo devuelve HTTP
 @RestController
 @CrossOrigin(origins = "*")
 public class FreeSpotController {
-    //GetMapping esta indicando que cuando llegue una peticion Get en la ruta /hello devolvera el mensaje de debajo
+
+    // Lista global y modificable en memoria (simulando base de datos)
+    private List<ParkingSpot> spots = new ArrayList<>(Arrays.asList(
+            new ParkingSpot(1, "A", true),
+            new ParkingSpot(2, "B", false),
+            new ParkingSpot(3, "C", true),
+            new ParkingSpot(4, "A", false),
+            new ParkingSpot(5, "B", true)
+    ));
+
+    // ==============================================================
+    // ENDPOINTS NUEVOS (Para usar con Postman y el ESP32)
+    // ==============================================================
+
+    // Ver todas las plazas y su estado (GET http://IP:8080/api/parking)
+    @GetMapping("/api/parking")
+    public List<ParkingSpot> getAllSpots() {
+        return spots;
+    }
+
+    // Actualizar si una plaza está ocupada o libre (POST http://IP:8080/api/parking)
+    @PostMapping("/api/parking")
+    public ParkingSpot updateSpot(@RequestBody ParkingSpot spot) {
+        for (ParkingSpot existingSpot : spots) {
+            if (existingSpot.getId() == spot.getId()) {
+                existingSpot.setFree(spot.isFree());
+                // Solo actualizamos la zona si se envía en el JSON
+                if (spot.getZone() != null) {
+                    existingSpot.setZone(spot.getZone());
+                }
+                return existingSpot;
+            }
+        }
+        // Si la plaza no existe, la añade a la lista
+        spots.add(spot);
+        return spot;
+    }
+
+    // ==============================================================
+    // ENDPOINTS ORIGINALES (Para tu página web Nginx / Parking ASIX)
+    // ==============================================================
+
     @GetMapping("/freespot")
     public int getFreeSpotsCount() {
-        // Misma lista de antes (luego la moveremos a un servicio)
-        List<ParkingSpot> spots = Arrays.asList(
-                new ParkingSpot(1, "A", true),
-                new ParkingSpot(2, "B", false),
-                new ParkingSpot(3, "C", true)
-        );
-
         int freeCount = 0;
         for (ParkingSpot spot : spots) {
             if (spot.isFree()) {
                 freeCount++;
             }
         }
-
         return freeCount;
     }
-    //Aqui estoy creando las listas para hacer pruebas
-    public List<ParkingSpot> getFreeSpots() {
-        List<ParkingSpot> spots = Arrays.asList(
-                new ParkingSpot(1, "A", true),
-                new ParkingSpot(2, "B", false),
-                new ParkingSpot(3, "C", true)
-        );
 
-        return spots;
-    }
-    //creamos este get para cuando reciba la peticion para saber las plazas de la zonaA las devuelva
-    @GetMapping("freespot/zoneA")
-    public int getZoneCountA(){
-        //inicializamos el contador en 0
+    @GetMapping("/freespot/zoneA")
+    public int getZoneCountA() {
         int counterZoneA = 0;
-        //Recuperamos las listas para saber las plazas
-        getFreeSpots();
-        //bucle For para saber las plazas libres
-        for (ParkingSpot spot : getFreeSpots()) {
-            //condicional si la zona equivale a A y el espacio esta libre suma
-            if(spot.getZone().equals("A") && spot.isFree()){
+        for (ParkingSpot spot : spots) {
+            if(spot.getZone().equals("A") && spot.isFree()) {
                 counterZoneA++;
             }
         }
         return counterZoneA;
     }
 
-    @GetMapping("freespot/zoneB")
-    public int getZoneCountB(){
+    @GetMapping("/freespot/zoneB")
+    public int getZoneCountB() {
         int counterZoneB = 0;
-        getFreeSpots();
-        for (ParkingSpot spot : getFreeSpots()) {
-            if(spot.getZone().equals("B") && spot.isFree()){
+        for (ParkingSpot spot : spots) {
+            if(spot.getZone().equals("B") && spot.isFree()) {
                 counterZoneB++;
             }
         }
         return counterZoneB;
     }
 
-    @GetMapping("freespot/zoneC")
-    public int getZoneCountC(){
+    @GetMapping("/freespot/zoneC")
+    public int getZoneCountC() {
         int counterZoneC = 0;
-        getFreeSpots();
-        for (ParkingSpot spot : getFreeSpots()) {
-            if(spot.getZone().equals("C") && spot.isFree()){
+        for (ParkingSpot spot : spots) {
+            if(spot.getZone().equals("C") && spot.isFree()) {
                 counterZoneC++;
             }
         }
         return counterZoneC;
     }
 }
-
