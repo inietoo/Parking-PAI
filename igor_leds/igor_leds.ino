@@ -1,160 +1,202 @@
 /*
  * ============================================================================
  * PROYECTO: Parking-PAI
- * MÓDULO: Detector de Plazas de Parking (Luz Roja/Verde)
- * DESCRIPCIÓN: Sistema de semáforo para indicar si una plaza está ocupada
- *              usando un sensor ultrasónico HC-SR04 y un LED RGB.
- * 
- * HARDWARE UTILIZADO:
- *   - ESP32 DevKit V1
- *   - Sensor ultrasónico HC-SR04 (5V)
- *   - LED RGB (Ánodo Común)
- *   - Resistencias 220Ω (x2) para el LED
- *   - Resistencias para divisor de voltaje (opcional)
+ * MÓDULO: Detector de Plazas (Igor) + Conexión WiFi GenCat
  * ============================================================================
  */
 
+
 #include <Arduino.h>
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include "esp_wpa2.h" // Se usa la librería clásica (ignorar aviso 'deprecated')
+
+
+// ============================================================================
+// CONFIGURACIÓN DE RED Y SERVIDOR
+// ============================================================================
+const char* ssid = "gencat_ENS_EDU"; // Nombre de la red WiFi
+#define EAP_IDENTITY "W43007257"     // Usuario
+#define EAP_PASSWORD "zhz0ot1par"    // Contraseña
+
+
+const String SERVER_URL = "http://192.168.3.249:8080/api/parking";
+
+
+// Datos de ESTA plaza
+const int PLAZA_ID = 6;
+const String PLAZA_ZONA = "C";
+
 
 // ============================================================================
 // CONFIGURACIÓN DE PINES
 // ============================================================================
-// Sensor Ultrasónico
-const int PIN_TRIG = 5;     // GPIO5 - Pin Trigger (envía el pulso)
-const int PIN_ECHO = 18;    // GPIO18 - Pin Echo (recibe el rebote)
+const int PIN_TRIG = 5;
+const int PIN_ECHO = 18;
+const int PIN_ROJO = 23;  
+const int PIN_VERDE = 22; 
 
-// LED RGB (Ánodo Común - pata larga a 3V3)
-const int PIN_ROJO = 22;    // GPIO23 - Pata Roja del LED
-const int PIN_VERDE = 23;   // GPIO22 - Pata Verde del LED
-
-// ============================================================================
-// PARÁMETROS DE FUNCIONAMIENTO
-// ============================================================================
-// Si detectamos un objeto a menos de esta distancia, la plaza está OCUPADA
-const int DISTANCIA_OCUPADO = 20;  // 20 cm (ajustable según altura del techo)
 
 // ============================================================================
 // VARIABLES GLOBALES
 // ============================================================================
-// Para lectura no bloqueante del sensor (multitarea)
+const int DISTANCIA_OCUPADO = 20; // cm
 unsigned long tiempoAnterior = 0;
-const long INTERVALO_LECTURA = 200;  // Leer cada 200ms (evita saturar Serial)
+const long INTERVALO_LECTURA = 200; 
+
+
+// Control de estado para enviar petición solo al cambiar
+bool estaLibreAnterior = true; 
+bool primeraEjecucion = true;
+
 
 // ============================================================================
-// FUNCIÓN: setup()
-// Descripción: Se ejecuta UNA SOLA VEZ al encender el ESP32
-// Tareas: Inicializar pines, Serial y hacer test del LED
+// SETUP
 // ============================================================================
 void setup() {
-  // Inicializar comunicación serial (para Debug en Monitor Serie)
   Serial.begin(115200);
-  Serial.println("\n========================================");
-  Serial.println("   PARKING-PAI: Sistema de Semáforo");
-  Serial.println("   Módulo: Detector de Plazas");
-  Serial.println("========================================\n");
-
-  // Configurar pines del sensor como entrada/salida
-  pinMode(PIN_TRIG, OUTPUT);    // TRIGGER: enviamos pulsos (salida)
-  pinMode(PIN_ECHO, INPUT);     // ECHO: recibimos señal (entrada)
-
-  // Configurar pines del LED como salida
+  
+  // 1. Configurar Pines
+  pinMode(PIN_TRIG, OUTPUT);
+  pinMode(PIN_ECHO, INPUT);
   pinMode(PIN_ROJO, OUTPUT);
   pinMode(PIN_VERDE, OUTPUT);
+  
+  digitalWrite(PIN_ROJO, HIGH);   // Apagado (Ánodo común)
+  digitalWrite(PIN_VERDE, HIGH);  // Apagado (Ánodo común)
 
-  // Apagar ambos colores (en Ánodo Común, HIGH = apagado)
-  digitalWrite(PIN_ROJO, HIGH);
-  digitalWrite(PIN_VERDE, HIGH);
 
-  // ---- TEST DE HARDWARE AL ARRANCAR ----
-  // Esto sirve para verificar que el LED está bien conectado
-  Serial.println("[TEST] Encendiendo LED ROJO...");
-  digitalWrite(PIN_ROJO, LOW);  // LOW = Encender en Ánodo Común
-  delay(1000);                  // Esperar 1 segundo
-  digitalWrite(PIN_ROJO, HIGH); // HIGH = Apagar
+  // 2. Conexión WiFi WPA2 Enterprise (GenCat)
+  Serial.println("\n\nConectando a WiFi (WPA2 Enterprise)...");
+  
+  WiFi.disconnect(true);
+  WiFi.mode(WIFI_STA);
+  
+  // Configuración de credenciales empresariales
+  esp_wifi_sta_wpa2_ent_set_identity((uint8_t *)EAP_IDENTITY, strlen(EAP_IDENTITY));
+  esp_wifi_sta_wpa2_ent_set_username((uint8_t *)EAP_IDENTITY, strlen(EAP_IDENTITY));
+  esp_wifi_sta_wpa2_ent_set_password((uint8_t *)EAP_PASSWORD, strlen(EAP_PASSWORD));
+  esp_wifi_sta_wpa2_ent_enable();
+  
+  WiFi.begin(ssid);
 
-  Serial.println("[TEST] Encendiendo LED VERDE...");
-  digitalWrite(PIN_VERDE, LOW); // LOW = Encender
-  delay(1000);
-  digitalWrite(PIN_VERDE, HIGH); // HIGH = Apagar
 
-  Serial.println("[OK] Hardware listo. Iniciando detección de plazas...\n");
+  // Esperar conexión
+  int contador = 0;
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+    contador++;
+    if(contador > 40) { // Si tarda más de 20 segs
+         Serial.println("\nNo se pudo conectar. Reiniciando...");
+         ESP.restart();
+    }
+  }
+
+
+  Serial.println("");
+  Serial.println("WiFi Conectado!");
+  Serial.print("Direccion IP: ");
+  Serial.println(WiFi.localIP()); 
+
+
+  // 3. Test rápido de LEDs
+  digitalWrite(PIN_ROJO, LOW); delay(500); digitalWrite(PIN_ROJO, HIGH);
+  digitalWrite(PIN_VERDE, LOW); delay(500); digitalWrite(PIN_VERDE, HIGH);
 }
 
+
 // ============================================================================
-// FUNCIÓN: leerDistancia()
-// Descripción: Obtiene la distancia en cm usando el sensor HC-SR04
-// Retorna: Distancia en centímetros (int)
-// Notas: Usa la fórmula: Distancia = (Tiempo × Velocidad del Sonido) / 2
+// LÓGICA DEL SENSOR
 // ============================================================================
 int leerDistancia() {
-  // 1. PREPARACIÓN: Limpiar el pin TRIGGER (LOW durante 2us)
   digitalWrite(PIN_TRIG, LOW);
   delayMicroseconds(2);
-
-  // 2. DISPARO: Enviar pulso ultrasónico (HIGH durante 10us)
   digitalWrite(PIN_TRIG, HIGH);
   delayMicroseconds(10);
   digitalWrite(PIN_TRIG, LOW);
-
-  // 3. LECTURA: Esperar a que ECHO se ponga HIGH y medir duración
-  // Parámetros: pin, nivel a esperar (HIGH), timeout (30ms)
-  // Si no hay respuesta en 30ms, asumimos que el sensor no detecta nada
   long duracion = pulseIn(PIN_ECHO, HIGH, 30000);
-
-  // 4. CÁLCULO: Convertir tiempo en distancia
-  // Velocidad del sonido ≈ 0.034 cm/microsegundo
-  // Divide por 2 porque el sonido va y vuelve (ida y vuelta)
-  int distancia = duracion * 0.034 / 2;
-
-  return distancia;
+  return duracion * 0.034 / 2;
 }
 
+
 // ============================================================================
-// FUNCIÓN: actualizarSemaforoParking()
-// Descripción: Actualiza el estado del LED según la distancia detectada
-// Parámetro: distancia en cm
-// Lógica:
-//   - Si distancia < DISTANCIA_OCUPADO → Plaza OCUPADA (ROJO)
-//   - Si distancia >= DISTANCIA_OCUPADO → Plaza LIBRE (VERDE)
+// ENVIAR POST AL SERVIDOR
 // ============================================================================
-void actualizarSemaforoParking(int distancia) {
-  if (distancia > 0 && distancia < DISTANCIA_OCUPADO) {
-    // ---- PLAZA OCUPADA: ENCENDER ROJO ----
-    digitalWrite(PIN_ROJO, LOW);   // LOW = Encender (Ánodo Común)
-    digitalWrite(PIN_VERDE, HIGH); // HIGH = Apagar
-    Serial.println("[OCUPADO] Plaza detectada. LED ROJO encendido.");
-  } 
-  else {
-    // ---- PLAZA LIBRE: ENCENDER VERDE ----
-    digitalWrite(PIN_ROJO, HIGH);  // HIGH = Apagar
-    digitalWrite(PIN_VERDE, LOW);  // LOW = Encender (Ánodo Común)
-    Serial.println("[LIBRE] Plaza disponible. LED VERDE encendido.");
+void enviarEstadoAlServidor(bool estaLibre) {
+  if (WiFi.status() == WL_CONNECTED) {
+    HTTPClient http;
+    http.begin(SERVER_URL);
+    http.addHeader("Content-Type", "application/json");
+
+
+    // Construir JSON manualmente
+    String estadoBool = estaLibre ? "true" : "false";
+    String jsonPayload = "{\"id\": " + String(PLAZA_ID) + 
+                         ", \"zone\": \"" + PLAZA_ZONA + 
+                         "\", \"free\": " + estadoBool + "}";
+
+
+    Serial.print("Enviando POST: ");
+    Serial.println(jsonPayload);
+
+
+    int httpResponseCode = http.POST(jsonPayload);
+
+
+    if (httpResponseCode > 0) {
+      String response = http.getString();
+      Serial.print("Codigo respuesta: ");
+      Serial.println(httpResponseCode); 
+    } else {
+      Serial.print("Error en el envio: ");
+      Serial.println(httpResponseCode);
+    }
+    http.end();
+  } else {
+    Serial.println("Error: WiFi desconectado");
   }
 }
 
+
 // ============================================================================
-// FUNCIÓN: loop()
-// Descripción: Se ejecuta continuamente (infinito)
-// Tareas: Leer sensor, mostrar datos, controlar LED
+// BUCLE PRINCIPAL
 // ============================================================================
 void loop() {
-  // Obtener tiempo actual en milisegundos
   unsigned long tiempoActual = millis();
 
-  // Ejecutar solo si han pasado INTERVALO_LECTURA ms desde la última lectura
-  // Esto permite que otros procesos (WiFi, MQTT, etc.) no se congelen
+
   if (tiempoActual - tiempoAnterior >= INTERVALO_LECTURA) {
     tiempoAnterior = tiempoActual;
 
-    // --- LECTURA DEL SENSOR ---
+
     int distancia = leerDistancia();
+    bool estaLibreActual = true;
 
-    // --- MOSTRAR DATOS EN MONITOR SERIE (DEBUG) ---
-    Serial.print("Distancia detectada: ");
-    Serial.print(distancia);
-    Serial.println(" cm");
 
-    // --- ACTUALIZAR ESTADO DEL SEMÁFORO ---
-    actualizarSemaforoParking(distancia);
+    // Lógica del semáforo
+    if (distancia > 0 && distancia < DISTANCIA_OCUPADO) {
+      // Ocupado
+      digitalWrite(PIN_ROJO, LOW);   // Encender
+      digitalWrite(PIN_VERDE, HIGH); // Apagar
+      estaLibreActual = false;
+    } else {
+      // Libre
+      digitalWrite(PIN_ROJO, HIGH); // Apagar
+      digitalWrite(PIN_VERDE, LOW); // Encender
+      estaLibreActual = true;
+    }
+
+
+    // Comprobar si ha cambiado el estado para enviar al servidor
+    if (estaLibreActual != estaLibreAnterior || primeraEjecucion) {
+      Serial.print("Cambio de estado detectado. Distancia: ");
+      Serial.println(distancia);
+      
+      enviarEstadoAlServidor(estaLibreActual);
+      
+      estaLibreAnterior = estaLibreActual;
+      primeraEjecucion = false;
+    }
   }
 }
