@@ -24,8 +24,8 @@ const int PIN_TRIG = 5;     // GPIO5 - Pin Trigger (envía el pulso)
 const int PIN_ECHO = 18;    // GPIO18 - Pin Echo (recibe el rebote)
 
 // LED RGB (Ánodo Común - pata larga a 3V3)
-const int PIN_ROJO = 23;    // GPIO23 - Pata Roja del LED
-const int PIN_VERDE = 22;   // GPIO22 - Pata Verde del LED
+const int PIN_ROJO = 22;    // GPIO23 - Pata Roja del LED
+const int PIN_VERDE = 23;   // GPIO22 - Pata Verde del LED
 
 // ============================================================================
 // PARÁMETROS DE FUNCIONAMIENTO
