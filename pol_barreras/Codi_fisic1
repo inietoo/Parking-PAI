@@ -1,217 +1,251 @@
-#include <WiFi.h>          // Llibreria WiFi per a l’ESP32
-#include "esp_wpa2.h"      // Suport per a WiFi WPA2-Enterprise (eduroam, gencat_ENS_EDU)
-#include "esp_wifi.h"      // API WiFi de baix nivell de l’ESP32
-#include <HTTPClient.h>    // Llibreria per fer peticions HTTP (GET/POST)
+// ===== SERVO SIN LIBRERÍAS - ESP32 CON PWM NATIVO =====
 
-// ===== WIFI WPA2-Enterprise gencat_ENS_EDU =====
-// Nom de la xarxa WiFi (SSID) del teu centre
-const char* ssid = "gencat_ENS_EDU";
-// Identitat / usuari i contrasenya per autenticar-te a la xarxa WPA2-Enterprise
-#define EAP_IDENTITY  "W43007257"   // Normalment el mateix que l’usuari
-#define EAP_USERNAME  "W43007257"   // Usuari del domini educatiu
-#define EAP_PASSWORD  "zhz0ot1par"  // Contrasenya del teu compte
-
-// ===== SERVIDOR PARKING =====
-// URL del backend on envies el JSON amb l’estat del pàrquing
-const char* serverUrl   = "http://192.168.3.249:8080/api/parking";
-// Identificador de la plaça de pàrquing
-const int   PARKING_ID  = 6;
-// Zona del pàrquing (per exemple A, B, C...)
-const char* PARKING_ZONE = "B";
-
-// ===== HARDWARE =====
-// Pin on tens connectat el servo que mou la barrera/porta
+// Pin on està connectat el senyal del servo
 const int SERVO_PIN = 18;
-// LEDs d’estat: verd (lliure) i roig (ocupat/tancat)
-const int LED_VERD  = 26;
-const int LED_ROIG  = 25;
-// Pins de trigger i echo del sensor d’ultrasons
-const int TRIG_PIN  = 5;
-const int ECHO_PIN  = 4;
+
+// Canal PWM LEDC de l'ESP32 que es farà servir per generar el senyal del servo
+const int PWM_CHANNEL = 0;      // Canal LEDC (0-15)
+
+// Freqüència típica d’un servo estàndard: 50 Hz = període de 20 ms
+const int PWM_FREQUENCY = 50;   // 50 Hz para servo estándar
+
+// Resolució del PWM en bits; 16 bits = valors de 0 a 65535 aproximadament
+const int PWM_RESOLUTION = 16;  // 16-bit resolución
+
+// Mapeo: 20ms ciclo total (50Hz)
+// 1ms pulse = 0°  → 3277 ticks
+// 1.5ms pulse = 90° → 4915 ticks
+// 2ms pulse = 180° → 6553 ticks
+// Aquests valors indiquen quin duty PWM correspon a cada angle del servo.[web:48][web:61]
+
+const int SERVO_MIN = 3277;   // Valor PWM aproximat per angle mínim
+const int SERVO_MAX = 6553;   // Valor PWM aproximat per angle màxim
+
+// ===== PUERTA AUTOMÀTICA ESP32 - SENSE LLIBRERIES =====
+// Pins originals mantinguts: Servo(18), LEDs(26,25), Sensor(5,4)
+
+// LEDs y Sensor
+
+// LED verd
+const int GREEN = 26;
+
+// LED roig
+const int RED = 25;
+
+// AQUÍ TORNES A DECLARAR SERVO_PIN.
+// Això és un problema perquè SERVO_PIN ja estava declarat abans.
+// En un sketch real això dona error o conflicte.[web:65][web:71]
+const int SERVO_PIN = 18;
+
+// Mateix pin del LED verd però amb un altre nom
+const int LED_VERD = 26;
+
+// Mateix pin del LED roig però amb un altre nom
+const int LED_ROIG = 25;
+
+// Pin TRIG del sensor ultrasònic HC-SR04
+const int TRIG_PIN = 5;
+
+// Pin ECHO del sensor ultrasònic HC-SR04
+const int ECHO_PIN = 4;
 
 // Variables globals
-long distancia = 0;        // Última distància mesurada pel sensor (en cm)
-int cotxes = 0;            // Comptador de cotxes que han entrat
-bool porta_oberta = false; // Estat de la porta (true = oberta)
 
-// ---------- FUNCIONS WIFI ----------
+// Variable global on es guardarà la distància llegida
+long distancia = 0;
 
-// Funció que connecta l’ESP32 a la xarxa gencat_ENS_EDU amb WPA2-Enterprise
-void connectEduWifi() {
-  Serial.println("Connectant a WPA2-Enterprise gencat_ENS_EDU...");
-
-  WiFi.disconnect(true);          // Desconnecta i neteja configuració WiFi anterior
-  WiFi.mode(WIFI_MODE_STA);       // Posa l’ESP32 en mode estació (client WiFi)
-
-  // Configura els paràmetres d’autenticació WPA2-Enterprise:
-  // identitat, nom d’usuari i contrasenya
-  esp_wifi_sta_wpa2_ent_set_identity((uint8_t *)EAP_IDENTITY, strlen(EAP_IDENTITY));
-  esp_wifi_sta_wpa2_ent_set_username((uint8_t *)EAP_USERNAME, strlen(EAP_USERNAME));
-  esp_wifi_sta_wpa2_ent_set_password((uint8_t *)EAP_PASSWORD, strlen(EAP_PASSWORD));
-
-  // Activa WPA2-Enterprise (amb els paràmetres de dalt)
-  esp_wpa2_config_t config = WPA2_CONFIG_INIT_DEFAULT();
-  esp_wifi_sta_wpa2_ent_enable(&config);
-
-  // Comença la connexió a l’SSID
-  WiFi.begin(ssid);
-
-  int intents = 0; // Comptador de reintents per no quedar-nos en un bucle infinit
-  // Espera fins que es connecti o fins a ~20 segons
-  while (WiFi.status() != WL_CONNECTED && intents < 40) { // ~20s
-    delay(500);           // Espera 0,5 s
-    Serial.print(".");    // Mostra un punt per veure el progrés
-    intents++;
-  }
-  Serial.println();
-
-  // Si s’ha connectat correctament, mostra IP
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.println("WiFi WPA2-Enterprise connectada!");
-    Serial.print("IP: ");
-    Serial.println(WiFi.localIP());
-  } else {
-    // Si no, mostra missatge d’error
-    Serial.println("No s'ha pogut connectar a la WiFi.");
-  }
-}
-
-// ---------- FUNCIONS SENSOR / SERVO ----------
-
-// Funció que mesura la distància amb el sensor d’ultrasons
+// Funció per mesurar la distància amb el sensor ultrasònic
 long mesurarDistancia() {
-  // Assegura’t que el TRIG està a LOW abans de començar
-  digitalWrite(TRIG_PIN, LOW);
-  delayMicroseconds(2);          // Espera 2 µs
 
-  // Envia un pols HIGH de 10 µs al TRIG per disparar el sensor
+  // Posem TRIG a LOW per assegurar una arrencada neta
+  digitalWrite(TRIG_PIN, LOW);
+  delayMicroseconds(2);
+
+  // Enviem un pols de 10 microsegons al TRIG per activar el sensor
   digitalWrite(TRIG_PIN, HIGH);
   delayMicroseconds(10);
   digitalWrite(TRIG_PIN, LOW);
 
-  // Mesura quant de temps el pin ECHO es manté a HIGH (eco de l’ultrasò)
-  long duracio = pulseIn(ECHO_PIN, HIGH, 58000); // Timeout a 58 ms (~999 cm max)
-  if (duracio == 0) return 999; // Si no hi ha resposta, retornem 999 cm (sentinel)
+  // pulseIn espera quant temps el pin ECHO està a HIGH
+  // amb un timeout de 30000 microsegons per no quedar bloquejat massa estona.[web:64][web:70]
+  long duracio = pulseIn(ECHO_PIN, HIGH, 30000);
 
-  // Converteix el temps (µs) a distància en cm:
-  // velocitat so ~0,034 cm/µs, es divideix entre 2 perquè va i torna
+  // Si no arriba cap eco dins del timeout, retorna 999 com a valor especial
+  if (duracio == 0) return 999;
+
+  // Converteix duració a distància en cm:
+  // velocitat del so aproximada 0.034 cm/us i dividim entre 2 (anada i tornada)
   return duracio * 0.034 / 2;
 }
 
-// Funció que mou el servo a un angle determinat (0–180)
-// Genera manualment el PWM amb polsos de 1–2 ms cada 20 ms
+// Mover servo a ángulo específico (0-180°)
+void servoWrite(int angle) {
+
+  // Converteix l’angle 0-180 a un valor PWM entre SERVO_MIN i SERVO_MAX
+  int pwmValue = map(angle, 0, 180, SERVO_MIN, SERVO_MAX);
+
+  // Escriu aquest valor al canal PWM de l’ESP32
+  ledcWrite(PWM_CHANNEL, pwmValue);
+
+// Control servo amb pulsos manuals (sense ledc)
 void mouServo(int angle) {
-  // Converteix angle a amplada de pols (1000–2000 µs)
+
+  // Aquesta funció és l’altra manera de controlar el servo:
+  // en lloc d’usar LEDC, genera polsos manuals amb digitalWrite.
+  // Però aquí està enganxada dins l’altra funció perquè falta una } abans.
+  // Tal com està, el codi està mal tancat i no compilarà.[web:65]
+
+  // Converteix angle a pols entre 1000 i 2000 microsegons
   int ampladaPulso = map(angle, 0, 180, 1000, 2000);
-  // Envia 10 cicles de PWM (uns 200 ms en total)
-  for (int i = 0; i < 10; i++) {
-    digitalWrite(SERVO_PIN, HIGH);          // Comença el pols
-    delayMicroseconds(ampladaPulso);        // Duració del pols HIGH
-    digitalWrite(SERVO_PIN, LOW);           // Final del pols
-    delayMicroseconds(20000 - ampladaPulso);// Resta fins als 20 ms totals
+  
+  // 10 cicles complets (200ms)
+  for(int i = 0; i < 10; i++) {
+
+    // Comença el pols en HIGH
+    digitalWrite(SERVO_PIN, HIGH);
+
+    // Manté HIGH el temps corresponent a l’angle
+    delayMicroseconds(ampladaPulso);
+
+    // Baixa el pin a LOW
+    digitalWrite(SERVO_PIN, LOW);
+
+    // Completa fins als 20 ms totals del cicle del servo
+    delayMicroseconds(20000 - ampladaPulso);
   }
 }
-
-// ---------- HTTP JSON ----------
-
-// Funció que envia l’estat del pàrquing al servidor en format JSON
-// lliure = true si la plaça està lliure, false si està ocupada
-void enviarEstatParking(bool lliure) {
-  // Si la WiFi ha caigut, intenta reconnectar
-  if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("WiFi caiguda, reintentant connexió...");
-    connectEduWifi();
-    // Si segueix sense WiFi, surt i no envia res
-    if (WiFi.status() != WL_CONNECTED) {
-      Serial.println("Encara sense WiFi, no envio JSON.");
-      return;
-    }
-  }
-
-  HTTPClient http;              // Objecte per fer la petició HTTP
-  http.begin(serverUrl);        // Configura la URL del servidor
-  http.addHeader("Content-Type", "application/json"); // Indica que enviem JSON
-
-  // Construeix a mà el string JSON
-  String jsonBody = "{";
-  jsonBody += "\"id\": " + String(PARKING_ID) + ",";          // id de la plaça
-  jsonBody += "\"zone\": \"" + String(PARKING_ZONE) + "\",";  // zona del pàrquing
-  jsonBody += "\"free\": " + String(lliure ? "true" : "false") + ","; // lliure/ocupat
-  jsonBody += "\"cars\": " + String(cotxes);                  // nombre de cotxes que han entrat
-  jsonBody += "}";
-
-  Serial.print("Enviant JSON: ");
-  Serial.println(jsonBody);     // Mostra el JSON que enviarem
-
-  // Envia la petició POST amb el cos JSON
-  int httpCode = http.POST(jsonBody);
-  Serial.print("Resposta HTTP: ");
-  Serial.println(httpCode);     // Mostra codi de resposta (200 = OK)
-
-  http.end();                   // Tanca la connexió HTTP
-}
-
-// ---------- SETUP / LOOP ----------
 
 void setup() {
-  Serial.begin(115200);                     // Inicialitza port sèrie
-  Serial.println("🚗 Sistema parking iniciant...");
 
-  // Configura els pins com a sortida o entrada
+  // Configura el PWM LEDC de l’ESP32
+  ledcSetup(PWM_CHANNEL, PWM_FREQUENCY, PWM_RESOLUTION);
+
+  // Assigna el pin del servo al canal PWM
+  ledcAttachPin(SERVO_PIN, PWM_CHANNEL);
+
+  // LEDs
+  // Configura els LEDs com a sortida
+  pinMode(GREEN, OUTPUT);
+  pinMode(RED, OUTPUT);
+
+  // Inicia comunicació sèrie
+  Serial.begin(115200);
+  Serial.println("🚪 Puerta automatica iniciada");
+
+  // Sensor ultrasónico
+  // Configurar pins
+
+  // Torna a configurar el pin del servo com OUTPUT manual,
+  // però això es barreja amb l’ús de LEDC i no és ideal
   pinMode(SERVO_PIN, OUTPUT);
+
+  // Configura LEDs amb els altres noms duplicats
   pinMode(LED_VERD, OUTPUT);
   pinMode(LED_ROIG, OUTPUT);
+
+  // Configura sensor
   pinMode(TRIG_PIN, OUTPUT);
   pinMode(ECHO_PIN, INPUT);
 
-  // Posició inicial: porta tancada
-  mouServo(5);
-  digitalWrite(LED_ROIG, HIGH);   // LED roig encès (tancat / ocupat)
-  digitalWrite(LED_VERD, LOW);    // LED verd apagat
+  // Estado inicial
 
-  // Connecta a la WiFi del centre
-  connectEduWifi();   // connecta a gencat_ENS_EDU
+  // Mou el servo a angle 5º amb PWM LEDC
+  servoWrite(5);
+
+  // Encén LED roig i apaga verd
+  digitalWrite(RED, HIGH);
+  digitalWrite(GREEN, LOW);
+
+  // AQUEST Serial.begin ESTÀ DUPLICAT
+  // No passa res greu, però és innecessari
+  Serial.begin(115200);
+  
+  // Estat inicial: porta tancada, llum vermella
+
+  // Torna a moure el servo però ara amb la funció manual
+  // Això mostra clarament que has barrejat dos sistemes diferents de control
+  mouServo(5);
+
+  // Torna a posar l’estat dels LEDs
+  digitalWrite(LED_ROIG, HIGH);
+  digitalWrite(LED_VERD, LOW);
+  
+  // Espera inicial
+  delay(1000);
 }
 
 void loop() {
-  // Mesura la distància del sensor d’ultrasons
+
+  // Llegeix la distància i la guarda a una variable local d
+  long d = mesurarDistancia();
+
+  // Imprimeix només el número per sèrie
+  Serial.println(d);
+
+  // Puerta cerrada por defecto
+
+  // Manté servo tancat amb la funció LEDC
+  servoWrite(5);
+
+  // Estat LED tancat
+  digitalWrite(RED, HIGH);
+  digitalWrite(GREEN, LOW);
+
+  // Si objeto a menos de 10cm: abrir puerta
+  if (d <= 10) {
+
+    // Si la distància és menor o igual a 10 cm, apaga roig i encén verd
+    digitalWrite(RED, LOW);
+    digitalWrite(GREEN, HIGH);
+
+    // Obre la porta amb el servo
+    servoWrite(90);
+
+    // Manté oberta 2 segons
+    delay(2000);
+
+  // A PARTIR D’AQUÍ COMENÇA UNA SEGONA LÒGICA ENGANXADA DINS DEL MATEIX LOOP
+  // Això està mal estructurat perquè sembla que falta tancar l’if o el bloc anterior
+
   distancia = mesurarDistancia();
+
+  // Escriu text + distància
   Serial.print("Distancia: ");
   Serial.print(distancia);
   Serial.println(" cm");
+  
+  // Porta tancada per defecte
 
-  // Estat per defecte: porta tancada i LED roig encès
-  if (!porta_oberta) {
-    mouServo(5);                 // Manté servo en posició de tancat
-    digitalWrite(LED_ROIG, HIGH);
-    digitalWrite(LED_VERD, LOW);
-  }
+  // Ara torna a tancar la porta, però amb l’altra funció manual
+  mouServo(5);
 
-  // Si detecta un cotxe a menys de 15 cm i la porta està tancada
-  if (distancia <= 15 && distancia > 0 && !porta_oberta) {
-    porta_oberta = true;         // Marca que la porta passa a estar oberta
-    cotxes++;                    // Incrementa el comptador de cotxes (ha entrat un de nou)
+  // Torna a posar LEDs amb els noms catalans
+  digitalWrite(LED_ROIG, HIGH);
+  digitalWrite(LED_VERD, LOW);
+  
+  // Objeto detectat < 10cm -> obrir porta
+  if (distancia <= 10 && distancia > 0) {
 
-    Serial.println("🔓 Cotxe detectat, obrint porta...");
-    digitalWrite(LED_ROIG, LOW); // Apaga LED roig
-    digitalWrite(LED_VERD, HIGH);// Encén LED verd
-    mouServo(90);                // Mou servo a posició d’obert
+    // Si detecta objecte proper, mostra missatge
+    Serial.println("🔓 Obrint porta...");
 
-    // Envia estat al servidor indicant que la plaça està ocupada
-    enviarEstatParking(false);
+    // Encén LED verd i apaga roig
+    digitalWrite(LED_ROIG, LOW);
+    digitalWrite(LED_VERD, HIGH);
 
-    delay(3000);                 // Manté la porta oberta 3 segons
+    // Obre la porta amb la funció manual
+    mouServo(90);
 
+    // Manté la porta oberta 3 segons
+    delay(3000);  // Manté 3 segons
+
+    // Missatge indicant que es tanca
     Serial.println("🔒 Tancant porta...");
-    porta_oberta = false;        // Torna a marcar porta tancada
-    mouServo(5);                 // Mou servo a posició de tancat novament
-    digitalWrite(LED_ROIG, HIGH);
-    digitalWrite(LED_VERD, LOW);
-
-    // Opcional: torna a enviar estat com a lliure
-    // Si només vols enviar quan entra un cotxe (ocupat), pots comentar aquesta línia
-    enviarEstatParking(true);
   }
 
-  delay(300);                    // Petita pausa abans de la següent lectura
+  // Petita espera
+  delay(100);
+  
+  // Una altra espera extra
+  delay(200);
 }
